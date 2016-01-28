@@ -1,12 +1,17 @@
 package main
 
 import (
-	//"encoding/json"
+	"encoding/json"
 	"fmt"
+	"github.com/docker/engine-api/client"
+	"github.com/docker/engine-api/types"
+	"github.com/docker/go-connections/tlsconfig"
 	"github.com/docker/machine/commands/mcndirs"
 	"github.com/docker/machine/libmachine"
-	//"github.com/docker/machine/libmachine/check"
+	"github.com/docker/machine/libmachine/check"
+	"github.com/docker/machine/libmachine/host"
 	"log"
+	"net/http"
 	"os"
 )
 
@@ -15,10 +20,11 @@ func getHost(api *libmachine.Client, hostname string) *host.Host {
 	if (err != nil) {
 		log.Fatal(err)
 	}
+	return host
 }
 
 func rewriteConfig(api *libmachine.Client, hostname string) {
-	host = getHost(api, hostname)
+	host := getHost(api, hostname)
 	ip, _ := host.Driver.GetIP()
 
 	swarmopts := host.HostOptions.SwarmOptions
@@ -30,13 +36,13 @@ func rewriteConfig(api *libmachine.Client, hostname string) {
 }
 
 func printIP(api *libmachine.Client, hostname string) {
-	host = getHost(api, hostname)
+	host := getHost(api, hostname)
 	ip, _ := host.Driver.GetIP()
 	fmt.Println(ip)
 }
 
-func printConfig(api *libmachine.Client, hostname string) {
-	host = getHost(api, hostname)
+func printJson(api *libmachine.Client, hostname string) {
+	host := getHost(api, hostname)
 	prettyJSON, err := json.MarshalIndent(host, "", "    ")
 	if err != nil {
 		log.Fatal(err)
@@ -45,15 +51,71 @@ func printConfig(api *libmachine.Client, hostname string) {
    	fmt.Println(string(prettyJSON))
 }
 
-func main() {
-	command := os.Args[1]
+func printConfig(api *libmachine.Client, hostname string) {
+	host := getHost(api, hostname)
+	dockerHost, authOptions, err := check.DefaultConnChecker.Check(host, true)
+	if err != nil {
+		log.Fatal("Error running connection boilerplate: %s", err)
+	}
+ 
+	fmt.Printf("--tlsverify\n--tlscacert=%q\n--tlscert=%q\n--tlskey=%q\n-H=%s\n",
+		authOptions.CaCertPath, authOptions.ClientCertPath, authOptions.ClientKeyPath, dockerHost)
+}
 
+func ps(api *libmachine.Client, hostname string) {
+	host := getHost(api, hostname)
+	dockerHost, authOptions, err := check.DefaultConnChecker.Check(host, true)
+	if err != nil {
+		log.Fatal("Error running connection boilerplate: %s", err)
+	}
+ 
+	options := tlsconfig.Options{
+		CAFile:             authOptions.CaCertPath,
+		CertFile:           authOptions.ClientCertPath,
+		KeyFile:            authOptions.ClientKeyPath,
+		InsecureSkipVerify: false,
+	}
+
+	tlsc, err := tlsconfig.Client(options)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: tlsc,
+	}
+
+	cli, err := client.NewClient(dockerHost, "v1.21", transport, nil)
+
+	//options := types.ContainerListOptions{All: true}
+	containers, err := cli.ContainerList(types.ContainerListOptions{All: true})
+	if err != nil {
+		panic(err)
+	}
+
+	for _, c := range containers {
+		fmt.Println(c.ID)
+	}
+}
+
+func main() {
     api := libmachine.NewClient(mcndirs.GetBaseDir(), mcndirs.GetMachineCertDir())
 	defer api.Close()
 
-	machine := os.Args[1]
+	command := os.Args[1]
 
-    st, _ := host.Driver.GetURL()
+	switch command {
+	case "ip": printIP(api, os.Args[2])
+	case "json": printJson(api, os.Args[2])
+	case "rewrite": rewriteConfig(api, os.Args[2])
+	case "config": printConfig(api, os.Args[2])
+	case "ps": ps(api, os.Args[2])
+	default: fmt.Println("nope!")
+	}
+
+	//machine := os.Args[1]
+
+    //st, _ := host.Driver.GetURL()
 	//st, _, _ := check.DefaultConnChecker.Check(host, false)
-	fmt.Println(st)
+	//fmt.Println(st)
 }
