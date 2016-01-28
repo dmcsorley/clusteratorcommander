@@ -109,8 +109,15 @@ func ps(api *libmachine.Client, hostname string) {
 	}
 }
 
+func start(api *libmachine.Client, hostnames []string) {
+	for _, hostname := range hostnames {
+		host := getHost(api, hostname)
+		host.Start()
+	}
+}
+
 func main() {
-    api := libmachine.NewClient(mcndirs.GetBaseDir(), mcndirs.GetMachineCertDir())
+	api := libmachine.NewClient(mcndirs.GetBaseDir(), mcndirs.GetMachineCertDir())
 	defer api.Close()
 
 	command := os.Args[1]
@@ -121,12 +128,13 @@ func main() {
 	case "rewrite": rewriteConfig(api, os.Args[2])
 	case "config": printConfig(api, os.Args[2])
 	case "ps": ps(api, os.Args[2])
+	case "start": start(api, os.Args[2:])
 	default: fmt.Println("nope!")
 	}
 
 	//machine := os.Args[1]
 
-    //st, _ := host.Driver.GetURL()
+	//st, _ := host.Driver.GetURL()
 	//st, _, _ := check.DefaultConnChecker.Check(host, false)
 	//fmt.Println(st)
 }
