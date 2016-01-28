@@ -8,6 +8,7 @@ import (
 	"github.com/docker/go-connections/tlsconfig"
 	"github.com/docker/machine/commands/mcndirs"
 	"github.com/docker/machine/libmachine"
+	"github.com/docker/machine/libmachine/auth"
 	"github.com/docker/machine/libmachine/check"
 	"github.com/docker/machine/libmachine/host"
 	"log"
@@ -21,6 +22,15 @@ func getHost(api *libmachine.Client, hostname string) *host.Host {
 		log.Fatal(err)
 	}
 	return host
+}
+
+func getHostOptions(host *host.Host, swarm bool) (string, *auth.Options) {
+	dockerHost, authOptions, err := check.DefaultConnChecker.Check(host, true)
+	if err != nil {
+		log.Fatal("Error running connection boilerplate: %s", err)
+	}
+
+	return dockerHost, authOptions
 }
 
 func rewriteConfig(api *libmachine.Client, hostname string) {
@@ -53,10 +63,7 @@ func printJson(api *libmachine.Client, hostname string) {
 
 func printConfig(api *libmachine.Client, hostname string) {
 	host := getHost(api, hostname)
-	dockerHost, authOptions, err := check.DefaultConnChecker.Check(host, true)
-	if err != nil {
-		log.Fatal("Error running connection boilerplate: %s", err)
-	}
+	dockerHost, authOptions := getHostOptions(host, true)
  
 	fmt.Printf("--tlsverify\n--tlscacert=%q\n--tlscert=%q\n--tlskey=%q\n-H=%s\n",
 		authOptions.CaCertPath, authOptions.ClientCertPath, authOptions.ClientKeyPath, dockerHost)
@@ -64,10 +71,7 @@ func printConfig(api *libmachine.Client, hostname string) {
 
 func ps(api *libmachine.Client, hostname string) {
 	host := getHost(api, hostname)
-	dockerHost, authOptions, err := check.DefaultConnChecker.Check(host, true)
-	if err != nil {
-		log.Fatal("Error running connection boilerplate: %s", err)
-	}
+	dockerHost, authOptions := getHostOptions(host, true)
  
 	options := tlsconfig.Options{
 		CAFile:             authOptions.CaCertPath,
