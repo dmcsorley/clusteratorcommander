@@ -1,0 +1,5 @@
+FROM dmcsorley/cdrdeps
+
+COPY . /go/src/app
+RUN go-wrapper install
+RUN GOOS=darwin GOARCH=amd64 go-wrapper install -ldflags '"-s"'
