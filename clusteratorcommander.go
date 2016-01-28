@@ -64,15 +64,12 @@ func printJson(api *libmachine.Client, hostname string) {
 func printConfig(api *libmachine.Client, hostname string) {
 	host := getHost(api, hostname)
 	dockerHost, authOptions := getHostOptions(host, true)
- 
+
 	fmt.Printf("--tlsverify\n--tlscacert=%q\n--tlscert=%q\n--tlskey=%q\n-H=%s\n",
 		authOptions.CaCertPath, authOptions.ClientCertPath, authOptions.ClientKeyPath, dockerHost)
 }
 
-func ps(api *libmachine.Client, hostname string) {
-	host := getHost(api, hostname)
-	dockerHost, authOptions := getHostOptions(host, true)
- 
+func getClient(dockerHost string, authOptions *auth.Options) *client.Client {
 	options := tlsconfig.Options{
 		CAFile:             authOptions.CaCertPath,
 		CertFile:           authOptions.ClientCertPath,
@@ -90,8 +87,18 @@ func ps(api *libmachine.Client, hostname string) {
 	}
 
 	cli, err := client.NewClient(dockerHost, "v1.21", transport, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	//options := types.ContainerListOptions{All: true}
+	return cli
+}
+
+func ps(api *libmachine.Client, hostname string) {
+	host := getHost(api, hostname)
+	dockerHost, authOptions := getHostOptions(host, true)
+	cli := getClient(dockerHost, authOptions)
+
 	containers, err := cli.ContainerList(types.ContainerListOptions{All: true})
 	if err != nil {
 		panic(err)
