@@ -16,7 +16,7 @@ import (
 	"os"
 )
 
-func getHost(api *libmachine.Client, hostname string) *host.Host {
+func loadHost(api *libmachine.Client, hostname string) *host.Host {
 	host, err := api.Load(hostname)
 	if (err != nil) {
 		log.Fatal(err)
@@ -34,7 +34,7 @@ func getHostOptions(host *host.Host, swarm bool) (string, *auth.Options) {
 }
 
 func rewriteConfig(api *libmachine.Client, hostname string) {
-	host := getHost(api, hostname)
+	host := loadHost(api, hostname)
 	ip, _ := host.Driver.GetIP()
 
 	swarmopts := host.HostOptions.SwarmOptions
@@ -45,24 +45,34 @@ func rewriteConfig(api *libmachine.Client, hostname string) {
 	api.Save(host)
 }
 
-func printIP(api *libmachine.Client, hostname string) {
-	host := getHost(api, hostname)
-	ip, _ := host.Driver.GetIP()
-	fmt.Println(ip)
+type hostable func(*host.Host)
+
+func forAllHosts(api *libmachine.Client, hostnames []string, applicable hostable) {
+	for _, hostname := range hostnames {
+		host := loadHost(api, hostname)
+		applicable(host)
+	}
+}
+
+func dmIP(api *libmachine.Client, hostnames []string) {
+	forAllHosts(api, hostnames, func(host *host.Host) {
+		ip, _ := host.Driver.GetIP()
+		fmt.Println(host.Name, ip)
+	})
 }
 
 func printJson(api *libmachine.Client, hostname string) {
-	host := getHost(api, hostname)
+	host := loadHost(api, hostname)
 	prettyJSON, err := json.MarshalIndent(host, "", "    ")
 	if err != nil {
 		log.Fatal(err)
-   	}
+	}
 
-   	fmt.Println(string(prettyJSON))
+	fmt.Println(string(prettyJSON))
 }
 
-func printConfig(api *libmachine.Client, hostname string) {
-	host := getHost(api, hostname)
+func dmConfig(api *libmachine.Client, hostname string) {
+	host := loadHost(api, hostname)
 	dockerHost, authOptions := getHostOptions(host, true)
 
 	fmt.Printf("--tlsverify\n--tlscacert=%q\n--tlscert=%q\n--tlskey=%q\n-H=%s\n",
@@ -94,8 +104,8 @@ func getClient(dockerHost string, authOptions *auth.Options) *client.Client {
 	return cli
 }
 
-func ps(api *libmachine.Client, hostname string) {
-	host := getHost(api, hostname)
+func dPs(api *libmachine.Client, hostname string) {
+	host := loadHost(api, hostname)
 	dockerHost, authOptions := getHostOptions(host, true)
 	cli := getClient(dockerHost, authOptions)
 
@@ -109,11 +119,10 @@ func ps(api *libmachine.Client, hostname string) {
 	}
 }
 
-func start(api *libmachine.Client, hostnames []string) {
-	for _, hostname := range hostnames {
-		host := getHost(api, hostname)
+func dmStart(api *libmachine.Client, hostnames []string) {
+	forAllHosts(api, hostnames, func(host *host.Host) {
 		host.Start()
-	}
+	})
 }
 
 func main() {
@@ -123,12 +132,12 @@ func main() {
 	command := os.Args[1]
 
 	switch command {
-	case "ip": printIP(api, os.Args[2])
+	case "ip": dmIP(api, os.Args[2:])
 	case "json": printJson(api, os.Args[2])
 	case "rewrite": rewriteConfig(api, os.Args[2])
-	case "config": printConfig(api, os.Args[2])
-	case "ps": ps(api, os.Args[2])
-	case "start": start(api, os.Args[2:])
+	case "config": dmConfig(api, os.Args[2])
+	case "ps": dPs(api, os.Args[2])
+	case "start": dmStart(api, os.Args[2:])
 	default: fmt.Println("nope!")
 	}
 
