@@ -80,6 +80,7 @@ func dmConfig(api *libmachine.Client, hostname string) {
 }
 
 func getClient(dockerHost string, authOptions *auth.Options) *client.Client {
+	// based on docker/engine-api/client.NewEnvClient
 	options := tlsconfig.Options{
 		CAFile:             authOptions.CaCertPath,
 		CertFile:           authOptions.ClientCertPath,
@@ -92,11 +93,13 @@ func getClient(dockerHost string, authOptions *auth.Options) *client.Client {
 		log.Fatal(err)
 	}
 
-	transport := &http.Transport{
-		TLSClientConfig: tlsc,
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: tlsc,
+		},
 	}
 
-	cli, err := client.NewClient(dockerHost, "v1.21", transport, nil)
+	cli, err := client.NewClient(dockerHost, "v1.21", httpClient, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
