@@ -213,7 +213,8 @@ func startConsul(cli *client.Client, command *strslice.StrSlice) error {
 	return runImage(cli, containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
 }
 
-func startFirstMember(api *libmachine.Client, hostname string, quorum int) (string, error) {
+func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (string, error) {
+	fmt.Println(hostname)
 	host := loadHost(api, hostname)
 	ip, _ := host.Driver.GetIP()
 	dockerHost, authOptions := getHostOptions(host, false)
@@ -226,36 +227,32 @@ func startFirstMember(api *libmachine.Client, hostname string, quorum int) (stri
 	return ip, nil
 }
 
+func startOtherMaster(api *libmachine.Client, host *host.Host, masterConnection string) error {
+	fmt.Println(host.Name)
+	ip, _ := host.Driver.GetIP()
+	dockerHost, authOptions := getHostOptions(host, false)
+	cli := createClient(dockerHost, authOptions)
+
+	err := startConsul(cli, strslice.New("-server", "-bind", ip, "-join", masterConnection))
+	return err
+}
+
 func clStart(api *libmachine.Client, hostnames []string) {
 	quorum := len(hostnames)/2 + 1
-	ip, err := startFirstMember(api, hostnames[0], quorum)
+	masterIP, err := startFirstMaster(api, hostnames[0], quorum)
 	if err != nil {
 		fmt.Println(err);
 		return
 	}
-	//fmt.Println(quorum, CONSUL_CONTAINER_NAME)
-	fmt.Println(ip)
 
-	//forAllHostsIndexed(api, hostnames, func(index int, host *host.Host) {
-		//ip, _ := host.Driver.GetIP()
-		//fmt.Println(index, host.Name, ip)
-		//dockerHost, authOptions := getHostOptions(host, false)
-		//cli := createClient(dockerHost, authOptions)
+	masterConnection := masterIP + ":8301"
 
-		//containerConfig := &container.Config{
-			//Image: CONSUL_AMD64_IMAGE,
-			//Cmd: []string{"-server", "-bind", ip, "-bootstrap-expect", quorum}
-		//}
-//CONSUL_QUORUM="-bootstrap-expect $(($MACHINE_COUNT / 2 + 1))"
-//CONSUL_JOINABLE="-join $(docker-machine ip $FIRST):8301"
-// progrium/consul
-// net: host
-// log_opt:
-//max-size: "10m"
-//max-file: "5"
-// command: -server -bind ${MACHINE_IP} ${CONSUL_QUORUM_OR_JOIN}
-//FIRST=${MACHINE_NAMES[0]}
-	//})
+	forAllHosts(api, hostnames[1:], func(host *host.Host) {
+		err := startOtherMaster(api, host, masterConnection)
+		if err != nil {
+			fmt.Println(err)
+		}
+	})
 }
 
 func clDestroy(api *libmachine.Client, hostnames []string) {

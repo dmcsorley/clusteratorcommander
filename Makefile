@@ -19,4 +19,5 @@ bash:
 	docker run -it --rm -v $$HOME:/home/me -e HOME=/home/me --name=ccdr $(IMAGE) bash
 
 dangling:
+	docker ps -aq | xargs docker rm -fv
 	docker images --filter dangling=true -q | xargs docker rmi
