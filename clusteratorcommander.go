@@ -237,7 +237,7 @@ func startOtherMaster(api *libmachine.Client, host *host.Host, masterConnection 
 	return err
 }
 
-func clStart(api *libmachine.Client, hostnames []string) {
+func clusterStart(api *libmachine.Client, hostnames []string) {
 	quorum := len(hostnames)/2 + 1
 	masterIP, err := startFirstMaster(api, hostnames[0], quorum)
 	if err != nil {
@@ -255,18 +255,27 @@ func clStart(api *libmachine.Client, hostnames []string) {
 	})
 }
 
-func clDestroy(api *libmachine.Client, hostnames []string) {
-	forAllHosts(api, hostnames, func(host *host.Host) {
-		dockerHost, authOptions := getHostOptions(host, false)
-		cli := createClient(dockerHost, authOptions)
+func forceRemoveContainer(cli *client.Client, names []string) {
+	for _, name := range names {
 		err := cli.ContainerRemove(types.ContainerRemoveOptions{
-			ContainerID: CONSUL_CONTAINER_NAME,
+			ContainerID: name,
 			RemoveVolumes: true,
 			Force: true,
 		})
 		if err != nil {
 			fmt.Println(err)
+		} else {
+			fmt.Println("Removed", name)
 		}
+	}
+}
+
+func clusterDestroy(api *libmachine.Client, hostnames []string) {
+	forAllHosts(api, hostnames, func(host *host.Host) {
+		fmt.Println(host.Name)
+		dockerHost, authOptions := getHostOptions(host, false)
+		cli := createClient(dockerHost, authOptions)
+		forceRemoveContainer(cli, []string{CONSUL_CONTAINER_NAME})
 	})
 }
 
@@ -282,9 +291,9 @@ func main() {
 	case "rewrite": rewriteConfig(api, os.Args[2])
 	case "config": dmConfig(api, os.Args[2])
 	case "ps": dPs(api, os.Args[2])
-	case "start": dmStart(api, os.Args[2:])
-	case "startcluster": clStart(api, os.Args[2:])
-	case "destroy": clDestroy(api, os.Args[2:])
+	case "startmachines": dmStart(api, os.Args[2:])
+	case "start": clusterStart(api, os.Args[2:])
+	case "destroy": clusterDestroy(api, os.Args[2:])
 	default: fmt.Println("nope!")
 	}
 
