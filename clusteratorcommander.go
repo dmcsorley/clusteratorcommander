@@ -13,6 +13,9 @@ import (
 	"github.com/docker/machine/libmachine/auth"
 	"github.com/docker/machine/libmachine/check"
 	"github.com/docker/machine/libmachine/host"
+	"golang.org/x/net/context"
+	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -21,6 +24,7 @@ import (
 
 const (
 	CONSUL_CONTAINER_NAME = "clusterator_consul"
+	CONSUL_AMD64_IMAGE = "progrium/consul"
 )
 
 func loadHost(api *libmachine.Client, hostname string) *host.Host {
@@ -142,27 +146,54 @@ func dmStart(api *libmachine.Client, hostnames []string) {
 	})
 }
 
-func startFirstMember(api *libmachine.Client, hostname string, quorum int) (string, error) {
-	host := loadHost(api, hostname)
-	ip, _ := host.Driver.GetIP()
-	dockerHost, authOptions := getHostOptions(host, false)
-	cli := createClient(dockerHost, authOptions)
-
+func pull(cli *client.Client, image, tag string) error {
 	pullOptions := types.ImagePullOptions{
-		ImageID: "progrium/consul",
-		Tag: "latest",
+		ImageID: image,
+		Tag: tag,
 	}
 
-	if resp, err := cli.ImagePull(pullOptions, nil); err != nil {
-		return "", err
+	if readCloser, err := cli.ImagePull(context.Background(), pullOptions, nil); err != nil {
+		return err
 	} else {
-		fmt.Println("Pull response", resp);
-		// TODO: wait for pull to finish
+		fmt.Printf("Downloading %s:%s\n", image, tag)
+		io.Copy(ioutil.Discard, readCloser)
+		readCloser.Close()
+		fmt.Println("Done")
+		return nil
+	}
+}
+
+func runImage(
+	cli *client.Client,
+	containerConfig *container.Config,
+	hostConfig *container.HostConfig,
+	containerName string,
+) error {
+	createResponse, err := cli.ContainerCreate(containerConfig, hostConfig, nil, containerName)
+
+	if err != nil {
+		if client.IsErrImageNotFound(err) {
+			pull(cli, containerConfig.Image, "latest")
+			createResponse, err = cli.ContainerCreate(containerConfig, hostConfig, nil, containerName)
+		} else {
+			return err
+		}
 	}
 
+	fmt.Println("Created", containerName, createResponse.ID)
+
+	err = cli.ContainerStart(createResponse.ID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func startConsul(cli *client.Client, command *strslice.StrSlice) error {
 	containerConfig := &container.Config{
-		Image: "progrium/consul",
-		Cmd: strslice.New("-server", "-bind", ip, "-bootstrap-expect", strconv.Itoa(quorum)),
+		Image: CONSUL_AMD64_IMAGE,
+		Cmd: command,
 	}
 
 	hostConfig := &container.HostConfig{
@@ -179,13 +210,18 @@ func startFirstMember(api *libmachine.Client, hostname string, quorum int) (stri
 		},
 	}
 
-	if resp, err := cli.ContainerCreate(containerConfig, hostConfig, nil, CONSUL_CONTAINER_NAME); err != nil {
-		return "", err
-	} else {
-		fmt.Println("Create Response", resp)
-	}
+	return runImage(cli, containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
+}
 
-	// TODO: start the newly created container
+func startFirstMember(api *libmachine.Client, hostname string, quorum int) (string, error) {
+	host := loadHost(api, hostname)
+	ip, _ := host.Driver.GetIP()
+	dockerHost, authOptions := getHostOptions(host, false)
+	cli := createClient(dockerHost, authOptions)
+	err := startConsul(cli, strslice.New("-server", "-bind", ip, "-bootstrap-expect", strconv.Itoa(quorum)))
+	if err != nil {
+		return "", err
+	}
 
 	return ip, nil
 }
@@ -207,7 +243,7 @@ func clStart(api *libmachine.Client, hostnames []string) {
 		//cli := createClient(dockerHost, authOptions)
 
 		//containerConfig := &container.Config{
-			//Image: "progrium/consul",
+			//Image: CONSUL_AMD64_IMAGE,
 			//Cmd: []string{"-server", "-bind", ip, "-bootstrap-expect", quorum}
 		//}
 //CONSUL_QUORUM="-bootstrap-expect $(($MACHINE_COUNT / 2 + 1))"
@@ -220,6 +256,21 @@ func clStart(api *libmachine.Client, hostnames []string) {
 // command: -server -bind ${MACHINE_IP} ${CONSUL_QUORUM_OR_JOIN}
 //FIRST=${MACHINE_NAMES[0]}
 	//})
+}
+
+func clDestroy(api *libmachine.Client, hostnames []string) {
+	forAllHosts(api, hostnames, func(host *host.Host) {
+		dockerHost, authOptions := getHostOptions(host, false)
+		cli := createClient(dockerHost, authOptions)
+		err := cli.ContainerRemove(types.ContainerRemoveOptions{
+			ContainerID: CONSUL_CONTAINER_NAME,
+			RemoveVolumes: true,
+			Force: true,
+		})
+		if err != nil {
+			fmt.Println(err)
+		}
+	})
 }
 
 func main() {
@@ -236,6 +287,7 @@ func main() {
 	case "ps": dPs(api, os.Args[2])
 	case "start": dmStart(api, os.Args[2:])
 	case "startcluster": clStart(api, os.Args[2:])
+	case "destroy": clDestroy(api, os.Args[2:])
 	default: fmt.Println("nope!")
 	}
 
