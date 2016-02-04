@@ -1,23 +1,17 @@
 package main
 
 import (
+	"clusterator/libclusterator"
 	"encoding/json"
 	"fmt"
 	"github.com/docker/engine-api/client"
 	"github.com/docker/engine-api/types"
 	"github.com/docker/engine-api/types/container"
 	"github.com/docker/engine-api/types/strslice"
-	"github.com/docker/go-connections/tlsconfig"
 	"github.com/docker/machine/commands/mcndirs"
 	"github.com/docker/machine/libmachine"
-	"github.com/docker/machine/libmachine/auth"
-	"github.com/docker/machine/libmachine/check"
 	"github.com/docker/machine/libmachine/host"
-	"golang.org/x/net/context"
-	"io"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"strconv"
 )
@@ -27,53 +21,8 @@ const (
 	CONSUL_AMD64_IMAGE = "progrium/consul"
 )
 
-func loadHost(api *libmachine.Client, hostname string) *host.Host {
-	host, err := api.Load(hostname)
-	if (err != nil) {
-		log.Fatal(err)
-	}
-	return host
-}
-
-func getHostOptions(host *host.Host, swarm bool) (string, *auth.Options) {
-	dockerHost, authOptions, err := check.DefaultConnChecker.Check(host, swarm)
-	if err != nil {
-		log.Fatal("Error running connection boilerplate: %s", err)
-	}
-
-	return dockerHost, authOptions
-}
-
-func createClient(dockerHost string, authOptions *auth.Options) *client.Client {
-	// based on docker/engine-api/client.NewEnvClient
-	options := tlsconfig.Options{
-		CAFile:             authOptions.CaCertPath,
-		CertFile:           authOptions.ClientCertPath,
-		KeyFile:            authOptions.ClientKeyPath,
-		InsecureSkipVerify: false,
-	}
-
-	tlsc, err := tlsconfig.Client(options)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tlsc,
-		},
-	}
-
-	cli, err := client.NewClient(dockerHost, "v1.21", httpClient, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return cli
-}
-
 func rewriteConfig(api *libmachine.Client, hostname string) {
-	host := loadHost(api, hostname)
+	host := libclusterator.LoadHost(api, hostname)
 	ip, _ := host.Driver.GetIP()
 
 	swarmopts := host.HostOptions.SwarmOptions
@@ -84,31 +33,15 @@ func rewriteConfig(api *libmachine.Client, hostname string) {
 	api.Save(host)
 }
 
-type hostable func(*host.Host)
-type indexedhostable func(int, *host.Host)
-
-func forAllHostsIndexed(api *libmachine.Client, hostnames []string, applicable indexedhostable) {
-	for index, hostname := range hostnames {
-		host := loadHost(api, hostname)
-		applicable(index, host)
-	}
-}
-
-func forAllHosts(api *libmachine.Client, hostnames []string, applicable hostable) {
-	forAllHostsIndexed(api, hostnames, func(index int, host *host.Host) {
-		applicable(host)
-	})
-}
-
 func dmIP(api *libmachine.Client, hostnames []string) {
-	forAllHosts(api, hostnames, func(host *host.Host) {
+	libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
 		ip, _ := host.Driver.GetIP()
 		fmt.Println(host.Name, ip)
 	})
 }
 
 func printJson(api *libmachine.Client, hostname string) {
-	host := loadHost(api, hostname)
+	host := libclusterator.LoadHost(api, hostname)
 	prettyJSON, err := json.MarshalIndent(host, "", "    ")
 	if err != nil {
 		log.Fatal(err)
@@ -118,17 +51,17 @@ func printJson(api *libmachine.Client, hostname string) {
 }
 
 func dmConfig(api *libmachine.Client, hostname string) {
-	host := loadHost(api, hostname)
-	dockerHost, authOptions := getHostOptions(host, true)
+	host := libclusterator.LoadHost(api, hostname)
+	dockerHost, authOptions := libclusterator.GetHostOptions(host, true)
 
 	fmt.Printf("--tlsverify\n--tlscacert=%q\n--tlscert=%q\n--tlskey=%q\n-H=%s\n",
 		authOptions.CaCertPath, authOptions.ClientCertPath, authOptions.ClientKeyPath, dockerHost)
 }
 
 func dPs(api *libmachine.Client, hostname string) {
-	host := loadHost(api, hostname)
-	dockerHost, authOptions := getHostOptions(host, true)
-	cli := createClient(dockerHost, authOptions)
+	host := libclusterator.LoadHost(api, hostname)
+	dockerHost, authOptions := libclusterator.GetHostOptions(host, true)
+	cli := libclusterator.CreateClient(dockerHost, authOptions)
 
 	containers, err := cli.ContainerList(types.ContainerListOptions{All: true})
 	if err != nil {
@@ -141,53 +74,9 @@ func dPs(api *libmachine.Client, hostname string) {
 }
 
 func dmStart(api *libmachine.Client, hostnames []string) {
-	forAllHosts(api, hostnames, func(host *host.Host) {
+	libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
 		host.Start()
 	})
-}
-
-func pull(cli *client.Client, image, tag string) error {
-	pullOptions := types.ImagePullOptions{
-		ImageID: image,
-		Tag: tag,
-	}
-
-	if readCloser, err := cli.ImagePull(context.Background(), pullOptions, nil); err != nil {
-		return err
-	} else {
-		fmt.Printf("Downloading %s:%s\n", image, tag)
-		io.Copy(ioutil.Discard, readCloser)
-		readCloser.Close()
-		fmt.Println("Done")
-		return nil
-	}
-}
-
-func runImage(
-	cli *client.Client,
-	containerConfig *container.Config,
-	hostConfig *container.HostConfig,
-	containerName string,
-) error {
-	createResponse, err := cli.ContainerCreate(containerConfig, hostConfig, nil, containerName)
-
-	if err != nil {
-		if client.IsErrImageNotFound(err) {
-			pull(cli, containerConfig.Image, "latest")
-			createResponse, err = cli.ContainerCreate(containerConfig, hostConfig, nil, containerName)
-		} else {
-			return err
-		}
-	}
-
-	fmt.Println("Created", containerName, createResponse.ID)
-
-	err = cli.ContainerStart(createResponse.ID)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func startConsul(cli *client.Client, command *strslice.StrSlice) error {
@@ -210,15 +99,15 @@ func startConsul(cli *client.Client, command *strslice.StrSlice) error {
 		},
 	}
 
-	return runImage(cli, containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
+	return libclusterator.RunImage(cli, containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
 }
 
 func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (string, error) {
 	fmt.Println(hostname)
-	host := loadHost(api, hostname)
+	host := libclusterator.LoadHost(api, hostname)
 	ip, _ := host.Driver.GetIP()
-	dockerHost, authOptions := getHostOptions(host, false)
-	cli := createClient(dockerHost, authOptions)
+	dockerHost, authOptions := libclusterator.GetHostOptions(host, false)
+	cli := libclusterator.CreateClient(dockerHost, authOptions)
 	err := startConsul(cli, strslice.New("-server", "-bind", ip, "-bootstrap-expect", strconv.Itoa(quorum)))
 	if err != nil {
 		return "", err
@@ -230,8 +119,8 @@ func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (stri
 func startOtherMaster(api *libmachine.Client, host *host.Host, masterConnection string) error {
 	fmt.Println(host.Name)
 	ip, _ := host.Driver.GetIP()
-	dockerHost, authOptions := getHostOptions(host, false)
-	cli := createClient(dockerHost, authOptions)
+	dockerHost, authOptions := libclusterator.GetHostOptions(host, false)
+	cli := libclusterator.CreateClient(dockerHost, authOptions)
 
 	err := startConsul(cli, strslice.New("-server", "-bind", ip, "-join", masterConnection))
 	return err
@@ -247,7 +136,7 @@ func clusterStart(api *libmachine.Client, hostnames []string) {
 
 	masterConnection := masterIP + ":8301"
 
-	forAllHosts(api, hostnames[1:], func(host *host.Host) {
+	libclusterator.ForAllHosts(api, hostnames[1:], func(host *host.Host) {
 		err := startOtherMaster(api, host, masterConnection)
 		if err != nil {
 			fmt.Println(err)
@@ -255,27 +144,19 @@ func clusterStart(api *libmachine.Client, hostnames []string) {
 	})
 }
 
-func forceRemoveContainer(cli *client.Client, names []string) {
-	for _, name := range names {
-		err := cli.ContainerRemove(types.ContainerRemoveOptions{
-			ContainerID: name,
-			RemoveVolumes: true,
-			Force: true,
-		})
-		if err != nil {
-			fmt.Println(err)
-		} else {
-			fmt.Println("Removed", name)
-		}
-	}
+func clusterDestroy(api *libmachine.Client, hostnames []string) {
+	libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
+		fmt.Println(host.Name)
+		dockerHost, authOptions := libclusterator.GetHostOptions(host, false)
+		cli := libclusterator.CreateClient(dockerHost, authOptions)
+		libclusterator.ForceRemoveContainer(cli, []string{CONSUL_CONTAINER_NAME})
+	})
 }
 
-func clusterDestroy(api *libmachine.Client, hostnames []string) {
-	forAllHosts(api, hostnames, func(host *host.Host) {
-		fmt.Println(host.Name)
-		dockerHost, authOptions := getHostOptions(host, false)
-		cli := createClient(dockerHost, authOptions)
-		forceRemoveContainer(cli, []string{CONSUL_CONTAINER_NAME})
+func url(api *libmachine.Client, hostnames []string) {
+	libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
+		dockerHost, _ := libclusterator.GetHostOptions(host, false)
+		fmt.Println(dockerHost)
 	})
 }
 
@@ -294,12 +175,7 @@ func main() {
 	case "startmachines": dmStart(api, os.Args[2:])
 	case "start": clusterStart(api, os.Args[2:])
 	case "destroy": clusterDestroy(api, os.Args[2:])
+	case "url": url(api, os.Args[2:])
 	default: fmt.Println("nope!")
 	}
-
-	//machine := os.Args[1]
-
-	//st, _ := host.Driver.GetURL()
-	//st, _, _ := check.DefaultConnChecker.Check(host, false)
-	//fmt.Println(st)
 }

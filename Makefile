@@ -13,7 +13,7 @@ deps:
 	docker tag -f $(IMAGE) dmcsorley/cdrdeps
 
 run:
-	docker run -it --rm -v $$PWD:/to --name=ccdr $(IMAGE) cp /go/bin/darwin_amd64/app /to/app
+	docker run -it --rm -v $$PWD:/to --name=ccdr $(IMAGE) cp /go/bin/darwin_amd64/clusterator /to/clusterator
 
 bash:
 	docker run -it --rm -v $$HOME:/home/me -e HOME=/home/me --name=ccdr $(IMAGE) bash
