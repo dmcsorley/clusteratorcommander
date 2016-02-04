@@ -7,6 +7,7 @@ partial:
 	docker build -f Dockerfile.partial -t $(IMAGE) .
 
 image:
+	docker pull golang
 	docker build -t $(IMAGE) .
 
 deps:

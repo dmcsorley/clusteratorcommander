@@ -1,4 +1,4 @@
-FROM golang:1.5
+FROM golang
 
 RUN mkdir -p /go/src/clusterator
 WORKDIR /go/src/clusterator
