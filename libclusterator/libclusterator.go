@@ -15,6 +15,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strings"
 )
 
 func LoadHost(api *libmachine.Client, hostname string) *host.Host {
@@ -25,16 +26,40 @@ func LoadHost(api *libmachine.Client, hostname string) *host.Host {
 	return host
 }
 
-func GetHostOptions(host *host.Host, swarm bool) (string, *auth.Options) {
+type DockerURL interface {
+	GetUrl() string
+	GetHostPort() string
+	GetHost() string
+}
+
+type StringDockerURL struct {
+	url string
+}
+
+func (url *StringDockerURL) GetUrl() string {
+	return url.url
+}
+
+func (url *StringDockerURL) GetHostPort() string {
+	parts := strings.SplitN(url.url, "://", 2)
+	return parts[1]
+}
+
+func (url *StringDockerURL) GetHost() string {
+	parts := strings.SplitN(url.GetHostPort(), ":", 2)
+	return parts[0]
+}
+
+func GetHostOptions(host *host.Host, swarm bool) (*StringDockerURL, *auth.Options) {
 	dockerHost, authOptions, err := check.DefaultConnChecker.Check(host, swarm)
 	if err != nil {
 		log.Fatal("Error running connection boilerplate: %s", err)
 	}
 
-	return dockerHost, authOptions
+	return &StringDockerURL{url:dockerHost}, authOptions
 }
 
-func CreateClient(dockerHost string, authOptions *auth.Options) *client.Client {
+func CreateClient(dockerHost DockerURL, authOptions *auth.Options) *client.Client {
 	// based on docker/engine-api/client.NewEnvClient
 	options := tlsconfig.Options{
 		CAFile:             authOptions.CaCertPath,
@@ -54,7 +79,7 @@ func CreateClient(dockerHost string, authOptions *auth.Options) *client.Client {
 		},
 	}
 
-	cli, err := client.NewClient(dockerHost, "v1.21", httpClient, nil)
+	cli, err := client.NewClient(dockerHost.GetUrl(), "v1.21", httpClient, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
