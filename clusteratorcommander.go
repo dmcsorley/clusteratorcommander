@@ -17,8 +17,11 @@ import (
 )
 
 const (
+	CLUSTER_NAME = "barney"
 	CONSUL_CONTAINER_NAME = "clusterator_consul"
 	CONSUL_AMD64_IMAGE = "progrium/consul"
+	SWARM_AGENT_CONTAINER_NAME = "clusterator_swarm_agent"
+	SWARM_AMD64_IMAGE = "swarm"
 )
 
 func rewriteConfig(api *libmachine.Client, hostname string) {
@@ -102,6 +105,31 @@ func startConsul(cli *client.Client, command *strslice.StrSlice) error {
 	return libclusterator.RunImage(cli, containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
 }
 
+func startSwarmAgent(cli *client.Client, host *host.Host, ip string) error {
+	dockerHostPort := ip + ":2376"
+	consulURL := "consul://" + ip + ":8500/" + CLUSTER_NAME
+
+	containerConfig := &container.Config{
+		Image: SWARM_AMD64_IMAGE,
+		Cmd: strslice.New("join", "--advertise", dockerHostPort, consulURL),
+	}
+
+	hostConfig := &container.HostConfig{
+		LogConfig: container.LogConfig{
+			Type: "json-file",
+			Config: map[string]string{
+				"max-size": "10m",
+				"max-file": "5",
+			},
+		},
+		RestartPolicy: container.RestartPolicy{
+			Name: "always",
+		},
+	}
+
+	return libclusterator.RunImage(cli, containerConfig, hostConfig, SWARM_AGENT_CONTAINER_NAME)
+}
+
 func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (string, error) {
 	fmt.Println(hostname)
 	host := libclusterator.LoadHost(api, hostname)
@@ -109,6 +137,11 @@ func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (stri
 	dockerHost, authOptions := libclusterator.GetHostOptions(host, false)
 	cli := libclusterator.CreateClient(dockerHost, authOptions)
 	err := startConsul(cli, strslice.New("-server", "-bind", ip, "-bootstrap-expect", strconv.Itoa(quorum)))
+	if err != nil {
+		return "", err
+	}
+
+	err = startSwarmAgent(cli, host, ip)
 	if err != nil {
 		return "", err
 	}
@@ -123,6 +156,11 @@ func startOtherMaster(api *libmachine.Client, host *host.Host, masterConnection 
 	cli := libclusterator.CreateClient(dockerHost, authOptions)
 
 	err := startConsul(cli, strslice.New("-server", "-bind", ip, "-join", masterConnection))
+	if err != nil {
+		return err
+	}
+
+	err = startSwarmAgent(cli, host, ip)
 	return err
 }
 
@@ -149,7 +187,7 @@ func clusterDestroy(api *libmachine.Client, hostnames []string) {
 		fmt.Println(host.Name)
 		dockerHost, authOptions := libclusterator.GetHostOptions(host, false)
 		cli := libclusterator.CreateClient(dockerHost, authOptions)
-		libclusterator.ForceRemoveContainer(cli, []string{CONSUL_CONTAINER_NAME})
+		libclusterator.ForceRemoveContainer(cli, []string{CONSUL_CONTAINER_NAME, SWARM_AGENT_CONTAINER_NAME})
 	})
 }
 
