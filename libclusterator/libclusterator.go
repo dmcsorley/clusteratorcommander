@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func LoadHost(api *libmachine.Client, hostname string) *host.Host {
@@ -143,6 +144,8 @@ func RunImage(
 	if err != nil {
 		return err
 	}
+
+	time.Sleep(100*time.Millisecond)
 
 	return nil
 }

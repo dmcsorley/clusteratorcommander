@@ -8,6 +8,7 @@ import (
 	"github.com/docker/engine-api/types"
 	"github.com/docker/engine-api/types/container"
 	"github.com/docker/engine-api/types/strslice"
+	"github.com/docker/go-connections/nat"
 	"github.com/docker/machine/commands/mcndirs"
 	"github.com/docker/machine/libmachine"
 	"github.com/docker/machine/libmachine/host"
@@ -22,6 +23,7 @@ const (
 	CONSUL_AMD64_IMAGE = "progrium/consul"
 	SWARM_AGENT_CONTAINER_NAME = "clusterator_swarm_agent"
 	SWARM_AMD64_IMAGE = "swarm"
+	SWARM_MASTER_CONTAINER_NAME = "clusterator_swarm_master"
 )
 
 func rewriteConfig(api *libmachine.Client, hostname string) {
@@ -99,7 +101,7 @@ func startConsul(cli *client.Client, command *strslice.StrSlice) error {
 	return libclusterator.RunImage(cli, containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
 }
 
-func startSwarmAgent(cli *client.Client, host *host.Host, dockerURL libclusterator.DockerURL) error {
+func startSwarmAgent(cli *client.Client, dockerURL libclusterator.DockerURL) error {
 	consulURL := "consul://" + dockerURL.GetHost() + ":8500/" + CLUSTER_NAME
 
 	containerConfig := &container.Config{
@@ -123,6 +125,45 @@ func startSwarmAgent(cli *client.Client, host *host.Host, dockerURL libclusterat
 	return libclusterator.RunImage(cli, containerConfig, hostConfig, SWARM_AGENT_CONTAINER_NAME)
 }
 
+func startSwarmMaster(cli *client.Client, dockerURL libclusterator.DockerURL) error {
+	port := "3376"
+	advertise := dockerURL.GetHost() + ":" + port
+	consulURL := "consul://" + dockerURL.GetHost() + ":8500/" + CLUSTER_NAME
+
+	containerConfig := &container.Config{
+		Image: SWARM_AMD64_IMAGE,
+		Cmd: strslice.New(
+			"manage",
+			"--replication",
+			"--advertise",
+			advertise,
+			"--tlsverify",
+			"--tlscacert=/certs/ca.pem",
+			"--tlscert=/certs/server.pem",
+			"--tlskey=/certs/server-key.pem",
+			consulURL,
+		),
+	}
+
+	hostConfig := &container.HostConfig{
+		Binds: []string{"/var/lib/boot2docker:/certs"},
+		LogConfig: container.LogConfig{
+			Type: "json-file",
+			Config: map[string]string{
+				"max-size": "10m",
+				"max-file": "5",
+			},
+		},
+		PortBindings: nat.PortMap{
+			nat.Port("2375/tcp"): []nat.PortBinding{nat.PortBinding{HostIP:dockerURL.GetHost(),HostPort:port}},
+		},
+		RestartPolicy: container.RestartPolicy{
+			Name: "always",
+		},
+	}
+	return libclusterator.RunImage(cli, containerConfig, hostConfig, SWARM_MASTER_CONTAINER_NAME)
+}
+
 func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (libclusterator.DockerURL, error) {
 	fmt.Println(hostname)
 	host := libclusterator.LoadHost(api, hostname)
@@ -134,7 +175,12 @@ func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (libc
 		return nil, err
 	}
 
-	err = startSwarmAgent(cli, host, dockerURL)
+	err = startSwarmAgent(cli, dockerURL)
+	if err != nil {
+		return nil, err
+	}
+
+	err = startSwarmMaster(cli, dockerURL)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +198,12 @@ func startOtherMaster(api *libmachine.Client, host *host.Host, consulMasterURL s
 		return err
 	}
 
-	err = startSwarmAgent(cli, host, dockerURL)
+	err = startSwarmAgent(cli, dockerURL)
+	if err != nil {
+		return err
+	}
+
+	err = startSwarmMaster(cli, dockerURL)
 	return err
 }
 
@@ -179,7 +230,7 @@ func clusterDestroy(api *libmachine.Client, hostnames []string) {
 		fmt.Println(host.Name)
 		dockerHost, authOptions := libclusterator.GetHostOptions(host, false)
 		cli := libclusterator.CreateClient(dockerHost, authOptions)
-		libclusterator.ForceRemoveContainer(cli, []string{CONSUL_CONTAINER_NAME, SWARM_AGENT_CONTAINER_NAME})
+		libclusterator.ForceRemoveContainer(cli, []string{CONSUL_CONTAINER_NAME, SWARM_AGENT_CONTAINER_NAME, SWARM_MASTER_CONTAINER_NAME})
 	})
 }
 
