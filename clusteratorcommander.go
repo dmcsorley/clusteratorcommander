@@ -78,14 +78,8 @@ func dPs(api *libmachine.Client, hostname string) {
 	}
 }
 
-func startConsul(cli *client.Client, command *strslice.StrSlice) error {
-	containerConfig := &container.Config{
-		Image: CONSUL_AMD64_IMAGE,
-		Cmd: command,
-	}
-
-	hostConfig := &container.HostConfig{
-		NetworkMode: "host",
+func standardHostConfig() *container.HostConfig {
+	return &container.HostConfig{
 		LogConfig: container.LogConfig{
 			Type: "json-file",
 			Config: map[string]string{
@@ -97,6 +91,16 @@ func startConsul(cli *client.Client, command *strslice.StrSlice) error {
 			Name: "always",
 		},
 	}
+}
+
+func startConsul(cli *client.Client, command *strslice.StrSlice) error {
+	containerConfig := &container.Config{
+		Image: CONSUL_AMD64_IMAGE,
+		Cmd: command,
+	}
+
+	hostConfig := standardHostConfig()
+	hostConfig.NetworkMode = "host"
 
 	return libclusterator.RunImage(cli, containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
 }
@@ -109,18 +113,7 @@ func startSwarmAgent(cli *client.Client, dockerURL libclusterator.DockerURL) err
 		Cmd: strslice.New("join", "--advertise", dockerURL.GetHostPort(), consulURL),
 	}
 
-	hostConfig := &container.HostConfig{
-		LogConfig: container.LogConfig{
-			Type: "json-file",
-			Config: map[string]string{
-				"max-size": "10m",
-				"max-file": "5",
-			},
-		},
-		RestartPolicy: container.RestartPolicy{
-			Name: "always",
-		},
-	}
+	hostConfig := standardHostConfig()
 
 	return libclusterator.RunImage(cli, containerConfig, hostConfig, SWARM_AGENT_CONTAINER_NAME)
 }
@@ -145,22 +138,12 @@ func startSwarmMaster(cli *client.Client, dockerURL libclusterator.DockerURL) er
 		),
 	}
 
-	hostConfig := &container.HostConfig{
-		Binds: []string{"/var/lib/boot2docker:/certs"},
-		LogConfig: container.LogConfig{
-			Type: "json-file",
-			Config: map[string]string{
-				"max-size": "10m",
-				"max-file": "5",
-			},
-		},
-		PortBindings: nat.PortMap{
-			nat.Port("2375/tcp"): []nat.PortBinding{nat.PortBinding{HostIP:dockerURL.GetHost(),HostPort:port}},
-		},
-		RestartPolicy: container.RestartPolicy{
-			Name: "always",
-		},
+	hostConfig := standardHostConfig()
+	hostConfig.Binds = []string{"/var/lib/boot2docker:/certs"}
+	hostConfig.PortBindings = nat.PortMap{
+		nat.Port("2375/tcp"): []nat.PortBinding{nat.PortBinding{HostIP:dockerURL.GetHost(),HostPort:port}},
 	}
+
 	return libclusterator.RunImage(cli, containerConfig, hostConfig, SWARM_MASTER_CONTAINER_NAME)
 }
 
