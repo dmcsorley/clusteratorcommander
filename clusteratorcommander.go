@@ -76,12 +76,6 @@ func dPs(api *libmachine.Client, hostname string) {
 	}
 }
 
-func dmStart(api *libmachine.Client, hostnames []string) {
-	libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
-		host.Start()
-	})
-}
-
 func startConsul(cli *client.Client, command *strslice.StrSlice) error {
 	containerConfig := &container.Config{
 		Image: CONSUL_AMD64_IMAGE,
@@ -134,6 +128,7 @@ func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (libc
 	host := libclusterator.LoadHost(api, hostname)
 	dockerURL, authOptions := libclusterator.GetHostOptions(host, false)
 	cli := libclusterator.CreateClient(dockerURL, authOptions)
+
 	err := startConsul(cli, strslice.New("-server", "-bind", dockerURL.GetHost(), "-bootstrap-expect", strconv.Itoa(quorum)))
 	if err != nil {
 		return nil, err
@@ -147,12 +142,12 @@ func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (libc
 	return dockerURL, nil
 }
 
-func startOtherMaster(api *libmachine.Client, host *host.Host, masterConnection string) error {
+func startOtherMaster(api *libmachine.Client, host *host.Host, consulMasterURL string) error {
 	fmt.Println(host.Name)
 	dockerURL, authOptions := libclusterator.GetHostOptions(host, false)
 	cli := libclusterator.CreateClient(dockerURL, authOptions)
 
-	err := startConsul(cli, strslice.New("-server", "-bind", dockerURL.GetHost(), "-join", masterConnection))
+	err := startConsul(cli, strslice.New("-server", "-bind", dockerURL.GetHost(), "-join", consulMasterURL))
 	if err != nil {
 		return err
 	}
@@ -161,7 +156,7 @@ func startOtherMaster(api *libmachine.Client, host *host.Host, masterConnection 
 	return err
 }
 
-func clusterStart(api *libmachine.Client, hostnames []string) {
+func clusterCreate(api *libmachine.Client, hostnames []string) {
 	quorum := len(hostnames)/2 + 1
 	masterURL, err := startFirstMaster(api, hostnames[0], quorum)
 	if err != nil {
@@ -169,10 +164,10 @@ func clusterStart(api *libmachine.Client, hostnames []string) {
 		return
 	}
 
-	masterConnection := masterURL.GetHost() + ":8301"
+	consulMasterURL := masterURL.GetHost() + ":8301"
 
 	libclusterator.ForAllHosts(api, hostnames[1:], func(host *host.Host) {
-		err := startOtherMaster(api, host, masterConnection)
+		err := startOtherMaster(api, host, consulMasterURL)
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -207,8 +202,7 @@ func main() {
 	case "rewrite": rewriteConfig(api, os.Args[2])
 	case "config": dmConfig(api, os.Args[2])
 	case "ps": dPs(api, os.Args[2])
-	case "startmachines": dmStart(api, os.Args[2:])
-	case "start": clusterStart(api, os.Args[2:])
+	case "create": clusterCreate(api, os.Args[2:])
 	case "destroy": clusterDestroy(api, os.Args[2:])
 	case "url": url(api, os.Args[2:])
 	default: fmt.Println("nope!")

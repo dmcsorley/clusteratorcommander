@@ -87,18 +87,6 @@ func CreateClient(dockerHost DockerURL, authOptions *auth.Options) *client.Clien
 	return cli
 }
 
-func RewriteConfig(api *libmachine.Client, hostname string) {
-	host := LoadHost(api, hostname)
-	ip, _ := host.Driver.GetIP()
-
-	swarmopts := host.HostOptions.SwarmOptions
-	swarmopts.IsSwarm = true
-	swarmopts.Master = true
-	swarmopts.Discovery = fmt.Sprintf("consul://%s:8500/barney", ip)
-
-	api.Save(host)
-}
-
 type Hostable func(*host.Host)
 type indexedhostable func(int, *host.Host)
 
