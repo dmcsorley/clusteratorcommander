@@ -2,6 +2,7 @@ package libclusterator
 
 import (
 	"fmt"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/engine-api/client"
 	"github.com/docker/engine-api/types"
 	"github.com/docker/engine-api/types/container"
@@ -11,20 +12,48 @@ import (
 	"github.com/docker/machine/libmachine/check"
 	"github.com/docker/machine/libmachine/host"
 	"golang.org/x/net/context"
-	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
 
-func LoadHost(api *libmachine.Client, hostname string) *host.Host {
+type DockerConnection interface {
+	RunImage(containerConfig *container.Config, hostConfig *container.HostConfig, containerName string) error
+	ForceRemoveContainers(containers []string)
+	GetDockerURL() DockerURL
+	GetDiscoveryURL(swarmname string) string
+	SaveSwarmConfig(swarmname string) error
+}
+
+type DockerMachineConnection struct {
+	api *libmachine.Client
+	host *host.Host
+	url DockerURL
+	authOptions *auth.Options
+	client *client.Client
+}
+
+func NewConnection(api *libmachine.Client, hostname string) *DockerMachineConnection {
 	host, err := api.Load(hostname)
 	if (err != nil) {
 		log.Fatal(err)
 	}
-	return host
+	dockerHost, authOptions, err := check.DefaultConnChecker.Check(host, false)
+	if err != nil {
+		log.Fatal("Error running connection boilerplate:", err)
+	}
+
+	client := createClient(dockerHost, authOptions)
+
+	return &DockerMachineConnection{
+		api: api,
+		host: host,
+		url: &StringDockerURL{url:dockerHost},
+		authOptions: authOptions,
+		client: client,
+	}
 }
 
 type DockerURL interface {
@@ -51,16 +80,7 @@ func (url *StringDockerURL) GetHost() string {
 	return parts[0]
 }
 
-func GetHostOptions(host *host.Host, swarm bool) (*StringDockerURL, *auth.Options) {
-	dockerHost, authOptions, err := check.DefaultConnChecker.Check(host, swarm)
-	if err != nil {
-		log.Fatal("Error running connection boilerplate: %s", err)
-	}
-
-	return &StringDockerURL{url:dockerHost}, authOptions
-}
-
-func CreateClient(dockerHost DockerURL, authOptions *auth.Options) *client.Client {
+func createClient(dockerHost string, authOptions *auth.Options) *client.Client {
 	// based on docker/engine-api/client.NewEnvClient
 	options := tlsconfig.Options{
 		CAFile:             authOptions.CaCertPath,
@@ -80,7 +100,7 @@ func CreateClient(dockerHost DockerURL, authOptions *auth.Options) *client.Clien
 		},
 	}
 
-	cli, err := client.NewClient(dockerHost.GetUrl(), "v1.21", httpClient, nil)
+	cli, err := client.NewClient(dockerHost, "v1.21", httpClient, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -88,20 +108,16 @@ func CreateClient(dockerHost DockerURL, authOptions *auth.Options) *client.Clien
 	return cli
 }
 
-type Hostable func(*host.Host)
-type indexedhostable func(int, *host.Host)
+type Machinable func(DockerConnection)
 
-func forAllHostsIndexed(api *libmachine.Client, hostnames []string, applicable indexedhostable) {
-	for index, hostname := range hostnames {
-		host := LoadHost(api, hostname)
-		applicable(index, host)
+func ForAllMachines(api *libmachine.Client, hostnames []string, applicable Machinable) []DockerConnection {
+	connections := make([]DockerConnection, 0, len(hostnames))
+	for _, hostname := range hostnames {
+		connection := NewConnection(api, hostname)
+		applicable(connection)
+		connections = append(connections, connection)
 	}
-}
-
-func ForAllHosts(api *libmachine.Client, hostnames []string, applicable Hostable) {
-	forAllHostsIndexed(api, hostnames, func(index int, host *host.Host) {
-		applicable(host)
-	})
+	return connections
 }
 
 func pull(cli *client.Client, image, tag string) error {
@@ -110,49 +126,46 @@ func pull(cli *client.Client, image, tag string) error {
 		Tag: tag,
 	}
 
-	if readCloser, err := cli.ImagePull(context.Background(), pullOptions, nil); err != nil {
+	if response, err := cli.ImagePull(context.Background(), pullOptions, nil); err != nil {
 		return err
 	} else {
-		fmt.Printf("Downloading %s:%s\n", image, tag)
-		io.Copy(ioutil.Discard, readCloser)
-		readCloser.Close()
-		fmt.Println("Done")
+		defer response.Close()
+		jsonmessage.DisplayJSONMessagesStream(response, os.Stdout, os.Stdout.Fd(), true, nil)
 		return nil
 	}
 }
 
-func RunImage(
-	cli *client.Client,
+func (conn *DockerMachineConnection) RunImage(
 	containerConfig *container.Config,
 	hostConfig *container.HostConfig,
 	containerName string,
 ) error {
-	createResponse, err := cli.ContainerCreate(containerConfig, hostConfig, nil, containerName)
+	createResponse, err := conn.client.ContainerCreate(containerConfig, hostConfig, nil, containerName)
 
 	if err != nil {
 		if client.IsErrImageNotFound(err) {
-			pull(cli, containerConfig.Image, "latest")
-			createResponse, err = cli.ContainerCreate(containerConfig, hostConfig, nil, containerName)
+			pull(conn.client, containerConfig.Image, "latest")
+			createResponse, err = conn.client.ContainerCreate(containerConfig, hostConfig, nil, containerName)
 		} else {
 			return err
 		}
 	}
 
-	fmt.Println("Created", containerName, createResponse.ID)
+	fmt.Println("Created", containerName, createResponse.ID, "on", conn.host.Name)
 
-	err = cli.ContainerStart(createResponse.ID)
+	err = conn.client.ContainerStart(createResponse.ID)
 	if err != nil {
 		return err
 	}
 
-	time.Sleep(100*time.Millisecond)
+	time.Sleep(500*time.Millisecond)
 
 	return nil
 }
 
-func ForceRemoveContainer(cli *client.Client, names []string) {
+func (conn *DockerMachineConnection) ForceRemoveContainers(names []string) {
 	for _, name := range names {
-		err := cli.ContainerRemove(types.ContainerRemoveOptions{
+		err := conn.client.ContainerRemove(types.ContainerRemoveOptions{
 			ContainerID: name,
 			RemoveVolumes: true,
 			Force: true,
@@ -160,8 +173,31 @@ func ForceRemoveContainer(cli *client.Client, names []string) {
 		if err != nil {
 			fmt.Println(err)
 		} else {
-			fmt.Println("Removed", name)
+			fmt.Println("Removed", name, "from", conn.host.Name)
 		}
 	}
+}
+
+func (conn *DockerMachineConnection) GetDockerURL() DockerURL {
+	return conn.url
+}
+
+func (conn *DockerMachineConnection) GetDiscoveryURL(clustername string) string {
+	return "consul://" + conn.url.GetHost() + ":8500/" + clustername
+}
+
+func (conn *DockerMachineConnection) SaveSwarmConfig(clustername string) error {
+	host, err := conn.api.Load(conn.host.Name)
+	if err != nil {
+		return err
+	}
+
+	swarmopts := host.HostOptions.SwarmOptions
+	swarmopts.IsSwarm = true
+	swarmopts.Master = true
+	swarmopts.Discovery = conn.GetDiscoveryURL(clustername)
+	conn.host = host
+
+	return conn.api.Save(host)
 }
 

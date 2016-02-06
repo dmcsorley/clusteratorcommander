@@ -2,19 +2,20 @@ package main
 
 import (
 	"clusterator/libclusterator"
-	"encoding/json"
+	//"encoding/json"
 	"fmt"
-	"github.com/docker/engine-api/client"
-	"github.com/docker/engine-api/types"
+	//"github.com/docker/engine-api/client"
+	//"github.com/docker/engine-api/types"
 	"github.com/docker/engine-api/types/container"
 	"github.com/docker/engine-api/types/strslice"
 	"github.com/docker/go-connections/nat"
 	"github.com/docker/machine/commands/mcndirs"
 	"github.com/docker/machine/libmachine"
-	"github.com/docker/machine/libmachine/host"
+	//"github.com/docker/machine/libmachine/host"
 	"log"
 	"os"
 	"strconv"
+	"time"
 )
 
 const (
@@ -26,57 +27,22 @@ const (
 	SWARM_MASTER_CONTAINER_NAME = "clusterator_swarm_master"
 )
 
-func rewriteConfig(api *libmachine.Client, hostname string) {
-	host := libclusterator.LoadHost(api, hostname)
-	ip, _ := host.Driver.GetIP()
+//func dmIP(api *libmachine.Client, hostnames []string) {
+	//libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
+		//ip, _ := host.Driver.GetIP()
+		//fmt.Println(host.Name, ip)
+	//})
+//}
 
-	swarmopts := host.HostOptions.SwarmOptions
-	swarmopts.IsSwarm = true
-	swarmopts.Master = true
-	swarmopts.Discovery = fmt.Sprintf("consul://%s:8500/barney", ip)
+//func printJson(api *libmachine.Client, hostname string) {
+	//host := libclusterator.LoadHost(api, hostname)
+	//prettyJSON, err := json.MarshalIndent(host, "", "    ")
+	//if err != nil {
+		//log.Fatal(err)
+	//}
 
-	api.Save(host)
-}
-
-func dmIP(api *libmachine.Client, hostnames []string) {
-	libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
-		ip, _ := host.Driver.GetIP()
-		fmt.Println(host.Name, ip)
-	})
-}
-
-func printJson(api *libmachine.Client, hostname string) {
-	host := libclusterator.LoadHost(api, hostname)
-	prettyJSON, err := json.MarshalIndent(host, "", "    ")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println(string(prettyJSON))
-}
-
-func dmConfig(api *libmachine.Client, hostname string) {
-	host := libclusterator.LoadHost(api, hostname)
-	dockerHost, authOptions := libclusterator.GetHostOptions(host, true)
-
-	fmt.Printf("--tlsverify\n--tlscacert=%q\n--tlscert=%q\n--tlskey=%q\n-H=%s\n",
-		authOptions.CaCertPath, authOptions.ClientCertPath, authOptions.ClientKeyPath, dockerHost)
-}
-
-func dPs(api *libmachine.Client, hostname string) {
-	host := libclusterator.LoadHost(api, hostname)
-	dockerHost, authOptions := libclusterator.GetHostOptions(host, true)
-	cli := libclusterator.CreateClient(dockerHost, authOptions)
-
-	containers, err := cli.ContainerList(types.ContainerListOptions{All: true})
-	if err != nil {
-		panic(err)
-	}
-
-	for _, c := range containers {
-		fmt.Println(c.ID)
-	}
-}
+	//fmt.Println(string(prettyJSON))
+//}
 
 func standardHostConfig() *container.HostConfig {
 	return &container.HostConfig{
@@ -93,7 +59,7 @@ func standardHostConfig() *container.HostConfig {
 	}
 }
 
-func startConsul(cli *client.Client, command *strslice.StrSlice) error {
+func startConsul(conn libclusterator.DockerConnection, command *strslice.StrSlice) error {
 	containerConfig := &container.Config{
 		Image: CONSUL_AMD64_IMAGE,
 		Cmd: command,
@@ -102,26 +68,24 @@ func startConsul(cli *client.Client, command *strslice.StrSlice) error {
 	hostConfig := standardHostConfig()
 	hostConfig.NetworkMode = "host"
 
-	return libclusterator.RunImage(cli, containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
+	return conn.RunImage(containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
 }
 
-func startSwarmAgent(cli *client.Client, dockerURL libclusterator.DockerURL) error {
-	consulURL := "consul://" + dockerURL.GetHost() + ":8500/" + CLUSTER_NAME
-
+func startSwarmAgent(conn libclusterator.DockerConnection) error {
 	containerConfig := &container.Config{
 		Image: SWARM_AMD64_IMAGE,
-		Cmd: strslice.New("join", "--advertise", dockerURL.GetHostPort(), consulURL),
+		Cmd: strslice.New("join", "--advertise", conn.GetDockerURL().GetHostPort(), conn.GetDiscoveryURL(CLUSTER_NAME)),
 	}
 
 	hostConfig := standardHostConfig()
 
-	return libclusterator.RunImage(cli, containerConfig, hostConfig, SWARM_AGENT_CONTAINER_NAME)
+	return conn.RunImage(containerConfig, hostConfig, SWARM_AGENT_CONTAINER_NAME)
 }
 
-func startSwarmMaster(cli *client.Client, dockerURL libclusterator.DockerURL) error {
+func startSwarmMaster(conn libclusterator.DockerConnection) error {
 	port := "3376"
-	advertise := dockerURL.GetHost() + ":" + port
-	consulURL := "consul://" + dockerURL.GetHost() + ":8500/" + CLUSTER_NAME
+	host := conn.GetDockerURL().GetHost()
+	advertise := host + ":" + port
 
 	containerConfig := &container.Config{
 		Image: SWARM_AMD64_IMAGE,
@@ -134,95 +98,74 @@ func startSwarmMaster(cli *client.Client, dockerURL libclusterator.DockerURL) er
 			"--tlscacert=/certs/ca.pem",
 			"--tlscert=/certs/server.pem",
 			"--tlskey=/certs/server-key.pem",
-			consulURL,
+			conn.GetDiscoveryURL(CLUSTER_NAME),
 		),
 	}
 
 	hostConfig := standardHostConfig()
 	hostConfig.Binds = []string{"/var/lib/boot2docker:/certs"}
 	hostConfig.PortBindings = nat.PortMap{
-		nat.Port("2375/tcp"): []nat.PortBinding{nat.PortBinding{HostIP:dockerURL.GetHost(),HostPort:port}},
+		nat.Port("2375/tcp"): []nat.PortBinding{nat.PortBinding{HostIP:host, HostPort:port}},
 	}
 
-	return libclusterator.RunImage(cli, containerConfig, hostConfig, SWARM_MASTER_CONTAINER_NAME)
+	return conn.RunImage(containerConfig, hostConfig, SWARM_MASTER_CONTAINER_NAME)
 }
 
-func startFirstMaster(api *libmachine.Client, hostname string, quorum int) (libclusterator.DockerURL, error) {
-	fmt.Println(hostname)
-	host := libclusterator.LoadHost(api, hostname)
-	dockerURL, authOptions := libclusterator.GetHostOptions(host, false)
-	cli := libclusterator.CreateClient(dockerURL, authOptions)
-
-	err := startConsul(cli, strslice.New("-server", "-bind", dockerURL.GetHost(), "-bootstrap-expect", strconv.Itoa(quorum)))
-	if err != nil {
-		return nil, err
-	}
-
-	err = startSwarmAgent(cli, dockerURL)
-	if err != nil {
-		return nil, err
-	}
-
-	err = startSwarmMaster(cli, dockerURL)
-	if err != nil {
-		return nil, err
-	}
-
-	return dockerURL, nil
-}
-
-func startOtherMaster(api *libmachine.Client, host *host.Host, consulMasterURL string) error {
-	fmt.Println(host.Name)
-	dockerURL, authOptions := libclusterator.GetHostOptions(host, false)
-	cli := libclusterator.CreateClient(dockerURL, authOptions)
-
-	err := startConsul(cli, strslice.New("-server", "-bind", dockerURL.GetHost(), "-join", consulMasterURL))
+func startSwarm(conn libclusterator.DockerConnection) error {
+	err := startSwarmAgent(conn)
 	if err != nil {
 		return err
 	}
 
-	err = startSwarmAgent(cli, dockerURL)
+	err = startSwarmMaster(conn)
 	if err != nil {
 		return err
 	}
 
-	err = startSwarmMaster(cli, dockerURL)
-	return err
+	return conn.SaveSwarmConfig(CLUSTER_NAME)
 }
 
 func clusterCreate(api *libmachine.Client, hostnames []string) {
+	// create the consul cluster first
 	quorum := len(hostnames)/2 + 1
-	masterURL, err := startFirstMaster(api, hostnames[0], quorum)
+	connection := libclusterator.NewConnection(api, hostnames[0])
+
+	err := startConsul(connection, strslice.New("-server", "-bind", connection.GetDockerURL().GetHost(), "-bootstrap-expect", strconv.Itoa(quorum)))
 	if err != nil {
-		fmt.Println(err);
-		return
+		log.Fatal(err)
 	}
 
-	consulMasterURL := masterURL.GetHost() + ":8301"
+	consulJoinURL := connection.GetDockerURL().GetHost() + ":8301"
 
-	libclusterator.ForAllHosts(api, hostnames[1:], func(host *host.Host) {
-		err := startOtherMaster(api, host, consulMasterURL)
+	connections := libclusterator.ForAllMachines(api, hostnames[1:], func(conn libclusterator.DockerConnection) {
+		err := startConsul(conn, strslice.New("-server", "-bind", conn.GetDockerURL().GetHost(), "-join", consulJoinURL))
 		if err != nil {
-			fmt.Println(err)
+			log.Fatal(err)
 		}
 	})
+
+	time.Sleep(500*time.Millisecond)
+
+	connections = append(connections, connection)
+	for _, conn := range connections {
+		if err = startSwarm(conn); err != nil {
+			log.Fatal(err)
+		}
+	}
 }
 
 func clusterDestroy(api *libmachine.Client, hostnames []string) {
-	libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
-		fmt.Println(host.Name)
-		dockerHost, authOptions := libclusterator.GetHostOptions(host, false)
-		cli := libclusterator.CreateClient(dockerHost, authOptions)
-		libclusterator.ForceRemoveContainer(cli, []string{CONSUL_CONTAINER_NAME, SWARM_AGENT_CONTAINER_NAME, SWARM_MASTER_CONTAINER_NAME})
+	libclusterator.ForAllMachines(api, hostnames, func(conn libclusterator.DockerConnection) {
+		conn.ForceRemoveContainers([]string{CONSUL_CONTAINER_NAME, SWARM_AGENT_CONTAINER_NAME, SWARM_MASTER_CONTAINER_NAME})
 	})
 }
 
-func url(api *libmachine.Client, hostnames []string) {
-	libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
-		dockerHost, _ := libclusterator.GetHostOptions(host, false)
-		fmt.Println(dockerHost)
-	})
-}
+//func url(api *libmachine.Client, hostnames []string) {
+	//libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
+		//dockerHost, _ := libclusterator.GetHostOptions(host, false)
+		//fmt.Println(dockerHost)
+	//})
+//}
 
 func main() {
 	api := libmachine.NewClient(mcndirs.GetBaseDir(), mcndirs.GetMachineCertDir())
@@ -231,14 +174,12 @@ func main() {
 	command := os.Args[1]
 
 	switch command {
-	case "ip": dmIP(api, os.Args[2:])
-	case "json": printJson(api, os.Args[2])
-	case "rewrite": rewriteConfig(api, os.Args[2])
-	case "config": dmConfig(api, os.Args[2])
-	case "ps": dPs(api, os.Args[2])
+	//case "ip": dmIP(api, os.Args[2:])
+	//case "json": printJson(api, os.Args[2])
+	//case "rewrite": rewriteConfig(api, os.Args[2])
 	case "create": clusterCreate(api, os.Args[2:])
 	case "destroy": clusterDestroy(api, os.Args[2:])
-	case "url": url(api, os.Args[2:])
+	//case "url": url(api, os.Args[2:])
 	default: fmt.Println("nope!")
 	}
 }
