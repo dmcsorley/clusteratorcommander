@@ -151,7 +151,7 @@ func (conn *DockerMachineConnection) RunImage(
 		}
 	}
 
-	fmt.Println("Created", containerName, createResponse.ID, "on", conn.host.Name)
+	fmt.Printf("Created %s/%s %s\n", conn.host.Name, containerName, createResponse.ID)
 
 	err = conn.client.ContainerStart(createResponse.ID)
 	if err != nil {
@@ -173,7 +173,7 @@ func (conn *DockerMachineConnection) ForceRemoveContainers(names []string) {
 		if err != nil {
 			fmt.Println(err)
 		} else {
-			fmt.Println("Removed", name, "from", conn.host.Name)
+			fmt.Printf("Removed %s/%s\n", conn.host.Name, name)
 		}
 	}
 }

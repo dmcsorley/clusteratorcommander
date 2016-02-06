@@ -2,16 +2,12 @@ package main
 
 import (
 	"clusterator/libclusterator"
-	//"encoding/json"
 	"fmt"
-	//"github.com/docker/engine-api/client"
-	//"github.com/docker/engine-api/types"
 	"github.com/docker/engine-api/types/container"
 	"github.com/docker/engine-api/types/strslice"
 	"github.com/docker/go-connections/nat"
 	"github.com/docker/machine/commands/mcndirs"
 	"github.com/docker/machine/libmachine"
-	//"github.com/docker/machine/libmachine/host"
 	"log"
 	"os"
 	"strconv"
@@ -26,23 +22,6 @@ const (
 	SWARM_AMD64_IMAGE = "swarm"
 	SWARM_MASTER_CONTAINER_NAME = "clusterator_swarm_master"
 )
-
-//func dmIP(api *libmachine.Client, hostnames []string) {
-	//libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
-		//ip, _ := host.Driver.GetIP()
-		//fmt.Println(host.Name, ip)
-	//})
-//}
-
-//func printJson(api *libmachine.Client, hostname string) {
-	//host := libclusterator.LoadHost(api, hostname)
-	//prettyJSON, err := json.MarshalIndent(host, "", "    ")
-	//if err != nil {
-		//log.Fatal(err)
-	//}
-
-	//fmt.Println(string(prettyJSON))
-//}
 
 func standardHostConfig() *container.HostConfig {
 	return &container.HostConfig{
@@ -160,13 +139,6 @@ func clusterDestroy(api *libmachine.Client, hostnames []string) {
 	})
 }
 
-//func url(api *libmachine.Client, hostnames []string) {
-	//libclusterator.ForAllHosts(api, hostnames, func(host *host.Host) {
-		//dockerHost, _ := libclusterator.GetHostOptions(host, false)
-		//fmt.Println(dockerHost)
-	//})
-//}
-
 func main() {
 	api := libmachine.NewClient(mcndirs.GetBaseDir(), mcndirs.GetMachineCertDir())
 	defer api.Close()
@@ -174,12 +146,9 @@ func main() {
 	command := os.Args[1]
 
 	switch command {
-	//case "ip": dmIP(api, os.Args[2:])
-	//case "json": printJson(api, os.Args[2])
-	//case "rewrite": rewriteConfig(api, os.Args[2])
 	case "create": clusterCreate(api, os.Args[2:])
 	case "destroy": clusterDestroy(api, os.Args[2:])
-	//case "url": url(api, os.Args[2:])
 	default: fmt.Println("nope!")
 	}
 }
+
