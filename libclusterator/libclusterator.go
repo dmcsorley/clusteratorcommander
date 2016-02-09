@@ -110,14 +110,11 @@ func createClient(dockerHost string, authOptions *auth.Options) *client.Client {
 
 type Machinable func(DockerConnection)
 
-func ForAllMachines(api *libmachine.Client, hostnames []string, applicable Machinable) []DockerConnection {
-	connections := make([]DockerConnection, 0, len(hostnames))
+func ForAllMachines(api *libmachine.Client, hostnames []string, applicable Machinable) {
 	for _, hostname := range hostnames {
 		connection := NewConnection(api, hostname)
 		applicable(connection)
-		connections = append(connections, connection)
 	}
-	return connections
 }
 
 func pull(cli *client.Client, image, tag string) error {

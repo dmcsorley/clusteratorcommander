@@ -50,6 +50,36 @@ func startConsul(conn libclusterator.DockerConnection, command *strslice.StrSlic
 	return conn.RunImage(containerConfig, hostConfig, CONSUL_CONTAINER_NAME)
 }
 
+func startConsulCluster(api *libmachine.Client, hostnames []string) ([]libclusterator.DockerConnection, error) {
+	quorum := len(hostnames)/2 + 1
+	connection := libclusterator.NewConnection(api, hostnames[0])
+
+	err := startConsul(connection, strslice.New("-server", "-bind", connection.GetDockerURL().GetHost(), "-bootstrap-expect", strconv.Itoa(quorum)))
+	if err != nil {
+		return nil, err
+	}
+
+	consulJoinURL := connection.GetDockerURL().GetHost() + ":8301"
+
+	connections := make([]libclusterator.DockerConnection, 0, len(hostnames))
+	connections = append(connections, connection)
+
+	libclusterator.ForAllMachines(api, hostnames[1:], func(conn libclusterator.DockerConnection) {
+		err := startConsul(conn, strslice.New("-server", "-bind", conn.GetDockerURL().GetHost(), "-join", consulJoinURL))
+		if err != nil {
+			log.Println(err)
+		} else {
+			connections = append(connections, conn)
+		}
+	})
+
+	if len(connections) == len(hostnames) {
+		return connections, nil
+	} else {
+		return nil, fmt.Errorf("Not all consul servers were created")
+	}
+}
+
 func startSwarmAgent(conn libclusterator.DockerConnection) error {
 	containerConfig := &container.Config{
 		Image: SWARM_AMD64_IMAGE,
@@ -106,26 +136,9 @@ func startSwarm(conn libclusterator.DockerConnection) error {
 
 func clusterCreate(api *libmachine.Client, hostnames []string) {
 	// create the consul cluster first
-	quorum := len(hostnames)/2 + 1
-	connection := libclusterator.NewConnection(api, hostnames[0])
-
-	err := startConsul(connection, strslice.New("-server", "-bind", connection.GetDockerURL().GetHost(), "-bootstrap-expect", strconv.Itoa(quorum)))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	consulJoinURL := connection.GetDockerURL().GetHost() + ":8301"
-
-	connections := libclusterator.ForAllMachines(api, hostnames[1:], func(conn libclusterator.DockerConnection) {
-		err := startConsul(conn, strslice.New("-server", "-bind", conn.GetDockerURL().GetHost(), "-join", consulJoinURL))
-		if err != nil {
-			log.Fatal(err)
-		}
-	})
-
+	connections, err := startConsulCluster(api, hostnames)
 	time.Sleep(500*time.Millisecond)
 
-	connections = append(connections, connection)
 	for _, conn := range connections {
 		if err = startSwarm(conn); err != nil {
 			log.Fatal(err)
@@ -146,6 +159,12 @@ func main() {
 	command := os.Args[1]
 
 	switch command {
+	case "consul": {
+		_, err := startConsulCluster(api, os.Args[2:])
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
 	case "create": clusterCreate(api, os.Args[2:])
 	case "destroy": clusterDestroy(api, os.Args[2:])
 	default: fmt.Println("nope!")
