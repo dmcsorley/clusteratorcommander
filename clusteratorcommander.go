@@ -18,6 +18,8 @@ const (
 	CLUSTER_NAME = "barney"
 	CONSUL_CONTAINER_NAME = "clusterator_consul"
 	CONSUL_AMD64_IMAGE = "progrium/consul"
+	REGISTRATOR_CONTAINER_NAME = "registrator"
+	REGISTRATOR_AMD64_IMAGE = "gliderlabs/registrator"
 	SWARM_AGENT_CONTAINER_NAME = "clusterator_swarm_agent"
 	SWARM_AMD64_IMAGE = "swarm"
 	SWARM_MASTER_CONTAINER_NAME = "clusterator_swarm_master"
@@ -134,6 +136,19 @@ func startSwarm(conn libclusterator.DockerConnection) error {
 	return conn.SaveSwarmConfig(CLUSTER_NAME)
 }
 
+func startRegistrator(conn libclusterator.DockerConnection) error {
+	containerConfig := &container.Config{
+		Image: REGISTRATOR_AMD64_IMAGE,
+		Cmd: strslice.New("consul://localhost:8500"),
+	}
+
+	hostConfig := standardHostConfig()
+	hostConfig.NetworkMode = "host"
+	hostConfig.Binds = []string{"/var/run/docker.sock:/tmp/docker.sock"}
+
+	return conn.RunImage(containerConfig, hostConfig, REGISTRATOR_CONTAINER_NAME)
+}
+
 func clusterCreate(api *libmachine.Client, hostnames []string) {
 	// create the consul cluster first
 	connections, err := startConsulCluster(api, hostnames)
@@ -143,12 +158,23 @@ func clusterCreate(api *libmachine.Client, hostnames []string) {
 		if err = startSwarm(conn); err != nil {
 			log.Fatal(err)
 		}
+		if err = startRegistrator(conn); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
 func clusterDestroy(api *libmachine.Client, hostnames []string) {
 	libclusterator.ForAllMachines(api, hostnames, func(conn libclusterator.DockerConnection) {
 		conn.ForceRemoveContainers([]string{CONSUL_CONTAINER_NAME, SWARM_AGENT_CONTAINER_NAME, SWARM_MASTER_CONTAINER_NAME})
+	})
+}
+
+func startRegistrators(api *libmachine.Client, hostnames []string) {
+	libclusterator.ForAllMachines(api, hostnames, func(conn libclusterator.DockerConnection) {
+		if err := startRegistrator(conn); err != nil {
+			log.Fatal(err)
+		}
 	})
 }
 
@@ -165,6 +191,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	case "registrator": startRegistrators(api, os.Args[2:])
 	case "create": clusterCreate(api, os.Args[2:])
 	case "destroy": clusterDestroy(api, os.Args[2:])
 	default: fmt.Println("nope!")
