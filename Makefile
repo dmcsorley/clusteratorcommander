@@ -11,7 +11,7 @@ image:
 	docker build -t $(IMAGE) .
 
 deps:
-	docker tag -f $(IMAGE) dmcsorley/cdrdeps
+	docker tag $(IMAGE) dmcsorley/cdrdeps
 
 run:
 	docker run -it --rm -v $$PWD:/to --name=ccdr $(IMAGE) cp /go/bin/darwin_amd64/clusterator /to/clusterator
