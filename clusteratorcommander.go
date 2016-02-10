@@ -166,7 +166,7 @@ func clusterCreate(api *libmachine.Client, hostnames []string) {
 
 func clusterDestroy(api *libmachine.Client, hostnames []string) {
 	libclusterator.ForAllMachines(api, hostnames, func(conn libclusterator.DockerConnection) {
-		conn.ForceRemoveContainers([]string{CONSUL_CONTAINER_NAME, SWARM_AGENT_CONTAINER_NAME, SWARM_MASTER_CONTAINER_NAME})
+		conn.ForceRemoveContainers([]string{CONSUL_CONTAINER_NAME, SWARM_AGENT_CONTAINER_NAME, SWARM_MASTER_CONTAINER_NAME, REGISTRATOR_CONTAINER_NAME})
 	})
 }
 
