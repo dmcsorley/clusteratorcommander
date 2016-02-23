@@ -40,7 +40,7 @@ func standardHostConfig() *container.HostConfig {
 	}
 }
 
-func startConsul(conn libclusterator.DockerConnection, command *strslice.StrSlice) error {
+func startConsul(conn libclusterator.DockerConnection, command strslice.StrSlice) error {
 	containerConfig := &container.Config{
 		Image: CONSUL_AMD64_IMAGE,
 		Cmd: command,
