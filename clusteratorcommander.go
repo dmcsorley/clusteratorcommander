@@ -56,7 +56,7 @@ func startConsulCluster(api *libmachine.Client, hostnames []string) ([]libcluste
 	quorum := len(hostnames)/2 + 1
 	connection := libclusterator.NewConnection(api, hostnames[0])
 
-	err := startConsul(connection, strslice.New("-server", "-bind", connection.GetDockerURL().GetHost(), "-bootstrap-expect", strconv.Itoa(quorum)))
+	err := startConsul(connection, strslice.StrSlice{"-server", "-bind", connection.GetDockerURL().GetHost(), "-bootstrap-expect", strconv.Itoa(quorum)})
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +67,7 @@ func startConsulCluster(api *libmachine.Client, hostnames []string) ([]libcluste
 	connections = append(connections, connection)
 
 	libclusterator.ForAllMachines(api, hostnames[1:], func(conn libclusterator.DockerConnection) {
-		err := startConsul(conn, strslice.New("-server", "-bind", conn.GetDockerURL().GetHost(), "-join", consulJoinURL))
+		err := startConsul(conn, strslice.StrSlice{"-server", "-bind", conn.GetDockerURL().GetHost(), "-join", consulJoinURL})
 		if err != nil {
 			log.Println(err)
 		} else {
@@ -85,7 +85,7 @@ func startConsulCluster(api *libmachine.Client, hostnames []string) ([]libcluste
 func startSwarmAgent(conn libclusterator.DockerConnection) error {
 	containerConfig := &container.Config{
 		Image: SWARM_AMD64_IMAGE,
-		Cmd: strslice.New("join", "--advertise", conn.GetDockerURL().GetHostPort(), conn.GetDiscoveryURL(CLUSTER_NAME)),
+		Cmd: strslice.StrSlice{"join", "--advertise", conn.GetDockerURL().GetHostPort(), conn.GetDiscoveryURL(CLUSTER_NAME)},
 	}
 
 	hostConfig := standardHostConfig()
@@ -100,7 +100,7 @@ func startSwarmMaster(conn libclusterator.DockerConnection) error {
 
 	containerConfig := &container.Config{
 		Image: SWARM_AMD64_IMAGE,
-		Cmd: strslice.New(
+		Cmd: strslice.StrSlice{
 			"manage",
 			"--replication",
 			"--advertise",
@@ -110,7 +110,7 @@ func startSwarmMaster(conn libclusterator.DockerConnection) error {
 			"--tlscert=/certs/server.pem",
 			"--tlskey=/certs/server-key.pem",
 			conn.GetDiscoveryURL(CLUSTER_NAME),
-		),
+		},
 	}
 
 	hostConfig := standardHostConfig()
@@ -139,7 +139,7 @@ func startSwarm(conn libclusterator.DockerConnection) error {
 func startRegistrator(conn libclusterator.DockerConnection) error {
 	containerConfig := &container.Config{
 		Image: REGISTRATOR_AMD64_IMAGE,
-		Cmd: strslice.New("consul://localhost:8500"),
+		Cmd: strslice.StrSlice{"consul://localhost:8500"},
 	}
 
 	hostConfig := standardHostConfig()

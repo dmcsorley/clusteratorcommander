@@ -1,4 +1,5 @@
 IMAGE=dmcsorley/ccdr
+DEPS=dmcsorley/cdrdeps
 
 help:
 	cat Makefile
@@ -11,7 +12,10 @@ image:
 	docker build -t $(IMAGE) .
 
 deps:
-	docker tag $(IMAGE) dmcsorley/cdrdeps
+	docker build -f Dockerfile.deps -t $(DEPS) .
+
+tagdeps:
+	docker tag $(IMAGE) $(DEPS)
 
 run:
 	docker run -it --rm -v $$PWD:/to --name=ccdr $(IMAGE) cp /go/bin/darwin_amd64/clusterator /to/clusterator

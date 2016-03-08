@@ -1,0 +1,8 @@
+FROM golang
+
+RUN mkdir -p /go/src/clusterator
+WORKDIR /go/src/clusterator
+
+COPY . /go/src/clusterator
+
+RUN go-wrapper download
