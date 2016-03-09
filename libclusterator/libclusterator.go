@@ -137,12 +137,12 @@ func (conn *DockerMachineConnection) RunImage(
 	hostConfig *container.HostConfig,
 	containerName string,
 ) error {
-	createResponse, err := conn.client.ContainerCreate(containerConfig, hostConfig, nil, containerName)
+	createResponse, err := conn.client.ContainerCreate(context.Background(), containerConfig, hostConfig, nil, containerName)
 
 	if err != nil {
 		if client.IsErrImageNotFound(err) {
 			pull(conn.client, containerConfig.Image, "latest")
-			createResponse, err = conn.client.ContainerCreate(containerConfig, hostConfig, nil, containerName)
+			createResponse, err = conn.client.ContainerCreate(context.Background(), containerConfig, hostConfig, nil, containerName)
 		} else {
 			return err
 		}
@@ -150,7 +150,7 @@ func (conn *DockerMachineConnection) RunImage(
 
 	fmt.Printf("Created %s/%s %s\n", conn.host.Name, containerName, createResponse.ID)
 
-	err = conn.client.ContainerStart(createResponse.ID)
+	err = conn.client.ContainerStart(context.Background(), createResponse.ID)
 	if err != nil {
 		return err
 	}
@@ -162,7 +162,7 @@ func (conn *DockerMachineConnection) RunImage(
 
 func (conn *DockerMachineConnection) ForceRemoveContainers(names []string) {
 	for _, name := range names {
-		err := conn.client.ContainerRemove(types.ContainerRemoveOptions{
+		err := conn.client.ContainerRemove(context.Background(), types.ContainerRemoveOptions{
 			ContainerID: name,
 			RemoveVolumes: true,
 			Force: true,
